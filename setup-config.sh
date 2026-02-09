@@ -52,6 +52,9 @@ if (process.env.DISCORD_BOT_TOKEN) {
     const dm = { policy: dmPolicy };
     if (process.env.DISCORD_DM_ALLOW_FROM) {
         dm.allowFrom = process.env.DISCORD_DM_ALLOW_FROM.split(',');
+        if (dmPolicy === 'open' && !dm.allowFrom.includes('*')) {
+            dm.allowFrom.push('*');
+        }
     } else if (dmPolicy === 'open') {
         dm.allowFrom = ['*'];
     }
