@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenClaw Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/clawd
+EnvironmentFile=/home/openclaw/.openclaw/env
+ExecStartPre=/home/openclaw/setup-config.sh
+ExecStart=openclaw gateway --port 18789 --verbose --bind localhost --token ${OPENCLAW_GATEWAY_TOKEN}
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/openclaw
+
+[Install]
+WantedBy=multi-user.target

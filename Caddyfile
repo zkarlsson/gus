@@ -1,0 +1,3 @@
+gus.giantsofoakland.com {
+	reverse_proxy localhost:18789
+}
