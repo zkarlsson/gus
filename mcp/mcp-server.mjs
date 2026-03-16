@@ -54,71 +54,78 @@ process.on('SIGHUP', () => {
 });
 
 // ============================================
-// MCP Server + Tools
+// MCP Server factory — one instance per session
 // ============================================
 
-const mcpServer = new McpServer({
-  name: 'openclaw-memory',
-  version: '1.0.0',
-});
+function createMcpServer() {
+  const server = new McpServer({
+    name: 'openclaw-memory',
+    version: '1.0.0',
+  });
 
-mcpServer.tool(
-  'memory_search',
-  'Search shared memory using hybrid semantic + keyword search. Returns memories visible to the current user based on privacy controls.',
-  {
-    query: z.string().describe('Search query text'),
-    limit: z.number().optional().default(5).describe('Max results (default 5)'),
-    tags: z.array(z.string()).optional().describe('Filter by tags'),
-    entity: z.string().optional().describe('Filter by linked entity name'),
-  },
-  async (args) => {
-    const results = await memorySearch(args, getUserIdentifier());
-    return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
-  }
-);
+  server.tool(
+    'memory_search',
+    'Search shared memory using hybrid semantic + keyword search. Returns memories visible to the current user based on privacy controls.',
+    {
+      query: z.string().describe('Search query text'),
+      limit: z.number().optional().default(5).describe('Max results (default 5)'),
+      tags: z.array(z.string()).optional().describe('Filter by tags'),
+      entity: z.string().optional().describe('Filter by linked entity name'),
+    },
+    async (args) => {
+      const results = await memorySearch(args, getUserIdentifier());
+      return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+    }
+  );
 
-mcpServer.tool(
-  'memory_pin',
-  'Save a permanent memory that will never be consolidated or compressed. Use when the user explicitly asks to remember something.',
-  {
-    content: z.string().describe('The memory content to save'),
-    tags: z.array(z.string()).optional().default([]).describe('Additional tags'),
-  },
-  async (args) => {
-    const result = await memorySave(args, getUserIdentifier(), true);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-  }
-);
+  server.tool(
+    'memory_pin',
+    'Save a permanent memory that will never be consolidated or compressed. Use when the user explicitly asks to remember something.',
+    {
+      content: z.string().describe('The memory content to save'),
+      tags: z.array(z.string()).optional().default([]).describe('Additional tags'),
+    },
+    async (args) => {
+      const result = await memorySave(args, getUserIdentifier(), true);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
 
-mcpServer.tool(
-  'memory_save',
-  'Save a managed memory for significant technical decisions, architectural insights, or project context. Subject to daily consolidation. Use automatically when encountering information worth preserving across sessions.',
-  {
-    content: z.string().describe('The memory content to save'),
-    tags: z.array(z.string()).optional().default([]).describe('Additional tags'),
-  },
-  async (args) => {
-    const result = await memorySave(args, getUserIdentifier(), false);
-    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-  }
-);
+  server.tool(
+    'memory_save',
+    'Save a managed memory for significant technical decisions, architectural insights, or project context. Subject to daily consolidation. Use automatically when encountering information worth preserving across sessions.',
+    {
+      content: z.string().describe('The memory content to save'),
+      tags: z.array(z.string()).optional().default([]).describe('Additional tags'),
+    },
+    async (args) => {
+      const result = await memorySave(args, getUserIdentifier(), false);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
 
-mcpServer.tool(
-  'entity_search',
-  'Browse known entities (people, projects, infrastructure). Read-only.',
-  {
-    type: z.string().optional().describe('Filter by type: person, project, infrastructure'),
-    name: z.string().optional().describe('Fuzzy name search'),
-  },
-  async (args) => {
-    const results = await entitySearch(args);
-    return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
-  }
-);
+  server.tool(
+    'entity_search',
+    'Browse known entities (people, projects, infrastructure). Read-only.',
+    {
+      type: z.string().optional().describe('Filter by type: person, project, infrastructure'),
+      name: z.string().optional().describe('Fuzzy name search'),
+    },
+    async (args) => {
+      const results = await entitySearch(args);
+      return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
+    }
+  );
+
+  return server;
+}
 
 // ============================================
 // HTTP Server with auth + body parsing
+// Session management: one MCP server + transport per session
 // ============================================
+
+const sessions = new Map(); // sessionId -> { server, transport }
 
 const httpServer = createServer((req, res) => {
   const url = req.url.replace(/^\/mcp/, '') || '/';
@@ -146,13 +153,34 @@ const httpServer = createServer((req, res) => {
       const bodyStr = Buffer.concat(chunks).toString();
       const body = bodyStr ? JSON.parse(bodyStr) : undefined;
 
-      await requestContext.run({ userIdentifier: user.identifier }, async () => {
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-        });
+      // Check for existing session
+      const sessionId = req.headers['mcp-session-id'];
+      let session = sessionId ? sessions.get(sessionId) : null;
 
-        await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, body);
+      await requestContext.run({ userIdentifier: user.identifier }, async () => {
+        if (session) {
+          // Reuse existing transport for this session
+          await session.transport.handleRequest(req, res, body);
+        } else {
+          // New session: create fresh server + transport
+          const server = createMcpServer();
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+          });
+
+          transport.onclose = () => {
+            if (transport.sessionId) {
+              sessions.delete(transport.sessionId);
+            }
+          };
+
+          await server.connect(transport);
+          await transport.handleRequest(req, res, body);
+
+          if (transport.sessionId) {
+            sessions.set(transport.sessionId, { server, transport });
+          }
+        }
       });
     } catch (err) {
       console.error('Request error:', err);
