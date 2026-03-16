@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "shared-memory": {
+      "type": "http",
+      "url": "https://gus.giantsofoakland.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN_HERE"
+      }
+    }
+  }
+}

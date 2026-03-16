@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenClaw Memory MCP Server
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/mcp
+EnvironmentFile=/home/openclaw/.openclaw/env
+ExecStart=/usr/bin/node /home/openclaw/mcp/mcp-server.mjs
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/openclaw
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
